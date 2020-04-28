@@ -56,7 +56,8 @@ class DOIPlugin(SingletonPlugin, toolkit.DefaultDatasetForm):
         :param pkg_dict:
 
         '''
-        get_or_create_doi(pkg_dict[u'id'])
+        if pkg_dict.get("use_custom_doi", "no") == "no":
+            get_or_create_doi(pkg_dict[u'id'])
 
     ## IPackageController
     def after_update(self, context, pkg_dict):
@@ -70,59 +71,60 @@ class DOIPlugin(SingletonPlugin, toolkit.DefaultDatasetForm):
 
         '''
         # Is this active and public? If so we need to make sure we have an active DOI
-        if pkg_dict.get(u'state', u'active') == u'active' and not pkg_dict.get(
-                u'private', False):
+        if pkg_dict.get("use_custom_doi", "no") == "no":
+            if pkg_dict.get(u'state', u'active') == u'active' and not pkg_dict.get(
+                    u'private', False):
 
-            package_id = pkg_dict[u'id']
+                package_id = pkg_dict[u'id']
 
-            # Load the original package, so we can determine if user has changed any
-            # fields
-            context.pop(u'schema')  # remove user-defined update schemas first
-            orig_pkg_dict = toolkit.get_action(u'package_show')(context, {
-                u'id': package_id
-                })
+                # Load the original package, so we can determine if user has changed any
+                # fields
+                context.pop(u'schema', None)  # remove user-defined update schemas first
+                orig_pkg_dict = toolkit.get_action(u'package_show')(context, {
+                    u'id': package_id
+                    })
 
-            # If metadata_created isn't populated in pkg_dict, copy from the original
-            if u'metadata_created' not in pkg_dict:
-                pkg_dict[u'metadata_created'] = orig_pkg_dict.get(u'metadata_created', u'')
+                # If metadata_created isn't populated in pkg_dict, copy from the original
+                if u'metadata_created' not in pkg_dict:
+                    pkg_dict[u'metadata_created'] = orig_pkg_dict.get(u'metadata_created', u'')
 
-            # Load the local DOI
-            doi = get_doi(package_id)
+                # Load the local DOI
+                doi = get_doi(package_id)
 
-            # If we don't have a DOI, create one
-            # This could happen if the DOI module is enabled after a dataset has been
-            # created
-            if not doi:
-                doi = get_or_create_doi(package_id)
+                # If we don't have a DOI, create one
+                # This could happen if the DOI module is enabled after a dataset has been
+                # created
+                if not doi:
+                    doi = get_or_create_doi(package_id)
 
-            # Build the metadata dict to pass to DataCite service
-            metadata_dict = build_metadata(pkg_dict, doi)
+                # Build the metadata dict to pass to DataCite service
+                metadata_dict = build_metadata(pkg_dict, doi)
 
-            # Perform some basic checks against the data - we require at the very least
-            # title and author fields - they're mandatory in the DataCite Schema
-            # This will only be an issue if another plugin has removed a mandatory field
-            validate_metadata(metadata_dict)
+                # Perform some basic checks against the data - we require at the very least
+                # title and author fields - they're mandatory in the DataCite Schema
+                # This will only be an issue if another plugin has removed a mandatory field
+                validate_metadata(metadata_dict)
 
-            # Is this an existing DOI? Update it
-            if doi.published:
+                # Is this an existing DOI? Update it
+                if doi.published:
 
-                # Before updating, check if any of the metadata has been changed -
-                # otherwise
-                # We end up sending loads of revisions to DataCite for minor edits
-                # Load the current version
-                orig_metadata_dict = build_metadata(orig_pkg_dict, doi)
-                # Check if the two dictionaries are the same
-                if cmp(orig_metadata_dict, metadata_dict) != 0:
-                    # Not the same, so we want to update the metadata
-                    update_doi(package_id, **metadata_dict)
-                    toolkit.h.flash_success(u'DataCite DOI metadata updated')
+                    # Before updating, check if any of the metadata has been changed -
+                    # otherwise
+                    # We end up sending loads of revisions to DataCite for minor edits
+                    # Load the current version
+                    orig_metadata_dict = build_metadata(orig_pkg_dict, doi)
+                    # Check if the two dictionaries are the same
+                    if cmp(orig_metadata_dict, metadata_dict) != 0:
+                        # Not the same, so we want to update the metadata
+                        update_doi(package_id, **metadata_dict)
+                        toolkit.h.flash_success(u'DataCite DOI metadata updated')
 
-                    # TODO: If editing a dataset older than 5 days, create DOI revision
+                        # TODO: If editing a dataset older than 5 days, create DOI revision
 
-            # New DOI - publish to datacite
-            else:
-                toolkit.h.flash_success(u'DataCite DOI created')
-                publish_doi(package_id, **metadata_dict)
+                # New DOI - publish to datacite
+                else:
+                    toolkit.h.flash_success(u'DataCite DOI created')
+                    publish_doi(package_id, **metadata_dict)
 
         return pkg_dict
 
@@ -135,14 +137,21 @@ class DOIPlugin(SingletonPlugin, toolkit.DefaultDatasetForm):
 
         '''
         # Load the DOI ready to display
-        doi = get_doi(pkg_dict[u'id'])
-        if doi:
-            pkg_dict[u'doi'] = doi.identifier
-            pkg_dict[u'doi_status'] = True if doi.published else False
+        if pkg_dict.get("use_custom_doi", "no") == "no":
+            doi = get_doi(pkg_dict[u'id'])
+            if doi:
+                pkg_dict[u'doi'] = doi.identifier
+                pkg_dict[u'doi_status'] = True if doi.published else False
+                pkg_dict[u'domain'] = get_site_url().replace(u'http://', u'')
+                pkg_dict[u'doi_date_published'] = datetime.strftime(doi.published,
+                                                                    u'%Y-%m-%d') if \
+                    doi.published else None
+                pkg_dict[u'doi_publisher'] = toolkit.config.get(u'ckanext.doi.publisher')
+        else:
+            pkg_dict[u'doi'] = pkg_dict["custom_doi"]
+            pkg_dict[u'doi_status'] = True
             pkg_dict[u'domain'] = get_site_url().replace(u'http://', u'')
-            pkg_dict[u'doi_date_published'] = datetime.strftime(doi.published,
-                                                                u'%Y-%m-%d') if \
-                doi.published else None
+            pkg_dict[u'doi_date_published'] = None
             pkg_dict[u'doi_publisher'] = toolkit.config.get(u'ckanext.doi.publisher')
 
     # ITemplateHelpers
